@@ -13,19 +13,23 @@
 ```
 JavaScript/
 ├── Day00/
-│   ├── Guide.md          ← Guide + termes clés du Day
-│   ├── js00.pdf                ← Sujet officiel
-│   ├── tester_pro.cpp          ← Moulinette PRO (tester avancé)
-│   ├── moulinette_v.01         ← Binaire compilé (ancienne version)
-│   └── ex01/
-│       └── ft_hello_garden.js  ← Exercice de l'étudiant
-├── Day01/                      ← (à venir)
-│   ├── Guide.md
-│   ├── js01.pdf
-│   └── ex0/ ex1/ ...
-├── ...
-├── Day09/                      ← (à venir)
-└── ROADMAP.md                  ← ← Tu es ici
+│   ├── README.md                         ← README du Day
+│   ├── docs/
+│   │   ├── Guide.md                      ← Guide + termes clés
+│   │   ├── cours-js-day00-concepts.md    ← Cours complet
+│   │   └── js00.pdf                      ← Sujet officiel (PDF)
+│   └── srcs/
+│       ├── exercises/
+│       │   ├── ex00/                     ← Exercices de l'étudiant
+│       │   ├── ex01/
+│       │   │   └── ft_hello_garden.js
+│       │   ├── ex02/ ... ex07/
+│       ├── tester/
+│       │   ├── tester_pro.cpp            ← Moulinette PRO
+│       │   └── moulinette_v.01           ← Binaire compilé
+│       └── results/                      ← Résultats des tests
+├── Day01/ ... Day09/                     ← (à venir, même structure)
+└── README.md                             ← ← Tu es ici
 ```
 
 ### Fonctionnalités du Tester Pro

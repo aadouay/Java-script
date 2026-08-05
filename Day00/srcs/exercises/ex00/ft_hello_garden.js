@@ -1,4 +1,3 @@
-
 function ft_hello_garden() {
   console.log("Hello , Garden Community !");
 }
