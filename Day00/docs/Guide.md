@@ -10,7 +10,7 @@
 
 Pour comprendre cette partie en profondeur, check ce lien :
 
-🔗 [JavaScript Course — Notion](https://app.notion.com/p/JavaScript-mini-course-Day00-concepts-Growing-Code-38a89112ac8780ca9f0fe96a3ca7494d)
+🔗 [JavaScript Course — Notion](https://app.notion.com/p/JavaScript-mini-course-Day00-concepts-Growing-Code-38a89112ac8780ca9f0fe96a3ca7494d?source=copy_link)
 
 ---
 

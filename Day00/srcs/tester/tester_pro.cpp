@@ -1,22 +1,30 @@
 /*
 ** ╔══════════════════════════════════════════════════════════════════╗
-** ║                    TESTER PRO - Moulinette JS                    ║
+** ║                    TESTER PRO v2.0 - Moulinette JS              ║
 ** ║                                                                  ║
 ** ║  Tests effectués :                                               ║
 ** ║    ✓ Existence du fichier                                        ║
-** ║    ✓ Vérification de module.exports                              ║
+** ║    ✓ Vérification de module.exports (mode wrapper)               ║
 ** ║    ✓ Comparaison de la sortie (stdout)                           ║
 ** ║    ✓ Détection de crash / segfault (signaux SIGSEGV, SIGABRT)    ║
 ** ║    ✓ Détection de timeout (boucle infinie)                       ║
 ** ║    ✓ Capture de stderr (erreurs de syntaxe, exceptions)          ║
 ** ║    ✓ Vérification du code de sortie (exit code)                  ║
+** ║    ✓ Support stdin (readline-sync, input simulé)       [NEW v2]  ║
+** ║    ✓ Mode direct (pas de wrapper nécessaire)           [NEW v2]  ║
 ** ║                                                                  ║
-** ║  Usage :                                                         ║
+** ║  Modes d'usage :                                                 ║
+** ║                                                                  ║
+** ║  MODE WRAPPER (classique, avec module.exports) :                 ║
 ** ║    ./tester_pro <ex_file> <wrapper> <func_call> <expected>       ║
 ** ║                                                                  ║
-** ║  Exemple :                                                       ║
-** ║    ./tester_pro ex01/ft_hello_garden.js ex01_test.js \            ║
-** ║                "ft_hello_garden()" "Hello, Garden Community!"     ║
+** ║  MODE DIRECT (exécute le fichier tel quel) :                     ║
+** ║    ./tester_pro --direct <ex_file> <expected>                    ║
+** ║                                                                  ║
+** ║  MODE DIRECT + STDIN (pour readline-sync) :                      ║
+** ║    ./tester_pro --direct --stdin "input" <ex_file> <expected>    ║
+** ║                                                                  ║
+** ║  Note : Dans <expected>, utiliser \n pour les retours à la ligne ║
 ** ╚══════════════════════════════════════════════════════════════════╝
 */
 
@@ -28,6 +36,7 @@
 #include <vector>
 #include <cstring>
 #include <csignal>
+#include <algorithm>
 
 #include <unistd.h>
 #include <sys/wait.h>
@@ -66,6 +75,37 @@ struct TestResult {
     bool        timeout;
     std::string details;      // message d'explication supplémentaire
 };
+
+// ═══════════════════════════════════════════════
+//             UTILITAIRES
+// ═══════════════════════════════════════════════
+
+// Remplacer les séquences littérales \n par de vrais retours à la ligne
+static std::string unescapeNewlines(const std::string& s) {
+    std::string result;
+    result.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (i + 1 < s.size() && s[i] == '\\' && s[i + 1] == 'n') {
+            result += '\n';
+            ++i;
+        } else {
+            result += s[i];
+        }
+    }
+    return result;
+}
+
+// Rendre les caractères invisibles visibles pour le debug
+static std::string escapeForDisplay(const std::string& s) {
+    std::string result;
+    for (char c : s) {
+        if (c == '\n') result += "\\n";
+        else if (c == '\r') result += "\\r";
+        else if (c == '\t') result += "\\t";
+        else result += c;
+    }
+    return result;
+}
 
 // ═══════════════════════════════════════════════
 //             CLASSE NODETESTER PRO
@@ -134,18 +174,139 @@ public:
         return res;
     }
 
-    // ─── Créer le wrapper script ───
+    // ─── Créer le wrapper script (mode classique) ───
     static void createWrapperScript(const std::string& wrapperName,
                                     const std::string& targetJs,
-                                    const std::string& functionCall) {
+                                    const std::string& functionCall,
+                                    const std::string& mockDir = "") {
         std::ofstream file(wrapperName);
-        std::string funcName = functionCall.substr(0, functionCall.find('('));
-        file << "const { " << funcName << " } = require('./" << targetJs << "');\n";
-        file << functionCall << ";\n";
+        std::size_t parenPos = functionCall.find('(');
+        std::string funcName = functionCall.substr(0, parenPos);
+        std::string args = (parenPos != std::string::npos) ? functionCall.substr(parenPos) : "()";
+
+        // Si le chemin est absolu, pas besoin de prefixer avec ./
+        std::string requirePath = targetJs;
+        if (!targetJs.empty() && targetJs[0] != '/') {
+            requirePath = "./" + targetJs;
+        }
+        file << "// Auto-generated wrapper (tester_pro v2.0)\n";
+        if (!mockDir.empty()) {
+            std::string absMockIndex = fs::absolute(mockDir + "/node_modules/readline-sync/index.js").string();
+            file << "const Module = require('module');\n";
+            file << "const origResolve = Module._resolveFilename;\n";
+            file << "Module._resolveFilename = function(request, parent, isMain, options) {\n";
+            file << "  if (request === 'readline-sync') {\n";
+            file << "    return '" << absMockIndex << "';\n";
+            file << "  }\n";
+            file << "  return origResolve.call(this, request, parent, isMain, options);\n";
+            file << "};\n";
+        }
+        file << "const imported = require('" << requirePath << "');\n";
+        file << "const fn = (typeof imported === 'function') ? imported : (imported['" << funcName << "'] || imported.default);\n";
+        file << "if (typeof fn === 'function') {\n";
+        file << "    fn" << args << ";\n";
+        file << "}\n";
         file.close();
     }
 
-    // ─── Exécuter le test principal (stdout, stderr, crash, timeout) ───
+    // ─── Créer un mock readline-sync pour simuler l'input ───
+    // readline-sync lit depuis /dev/tty, pas depuis stdin.
+    // On crée un faux module dans /tmp qui retourne les réponses pré-configurées.
+    static std::string createReadlineMock(const std::string& targetDir,
+                                          const std::string& stdinInput) {
+        std::string mockDir = "/tmp/__mock_readline_sync__";
+        if (fs::exists(mockDir)) {
+            fs::remove_all(mockDir);
+        }
+        fs::create_directories(mockDir + "/node_modules/readline-sync");
+
+        // Parser les inputs (séparés par \n)
+        std::string unescaped = unescapeNewlines(stdinInput);
+        std::vector<std::string> inputs;
+        std::istringstream iss(unescaped);
+        std::string line;
+        while (std::getline(iss, line)) {
+            inputs.push_back(line);
+        }
+
+        // Créer le mock readline-sync/index.js
+        std::string mockFile = mockDir + "/node_modules/readline-sync/index.js";
+        std::ofstream mock(mockFile);
+        mock << "// Auto-generated mock for readline-sync (tester_pro v2.0)\n";
+        mock << "const _inputs = [";
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            // Échapper les guillemets et backslashes dans l'input
+            std::string escaped;
+            for (char c : inputs[i]) {
+                if (c == '\"' || c == '\\') escaped += '\\';
+                escaped += c;
+            }
+            mock << "\"" << escaped << "\"";
+            if (i + 1 < inputs.size()) mock << ", ";
+        }
+        mock << "];\n";
+        mock << "let _idx = 0;\n";
+        mock << "module.exports = {\n";
+        mock << "  question: function(prompt) {\n";
+        mock << "    if (prompt) process.stdout.write(prompt);\n";
+        mock << "    if (_idx < _inputs.length) return _inputs[_idx++];\n";
+        mock << "    return '';\n";
+        mock << "  },\n";
+        mock << "  questionInt: function(prompt) {\n";
+        mock << "    return parseInt(this.question(prompt));\n";
+        mock << "  },\n";
+        mock << "  questionFloat: function(prompt) {\n";
+        mock << "    return parseFloat(this.question(prompt));\n";
+        mock << "  },\n";
+        mock << "  keyInYN: function(prompt) {\n";
+        mock << "    const ans = this.question(prompt);\n";
+        mock << "    return ans.toLowerCase() === 'y';\n";
+        mock << "  },\n";
+        mock << "  keyInSelect: function(items, prompt) {\n";
+        mock << "    return parseInt(this.question(prompt));\n";
+        mock << "  }\n";
+        mock << "};\n";
+        mock.close();
+
+        // Créer un package.json minimal pour le mock
+        std::string pkgFile = mockDir + "/node_modules/readline-sync/package.json";
+        std::ofstream pkg(pkgFile);
+        pkg << "{\"name\":\"readline-sync\",\"version\":\"1.0.0\",\"main\":\"index.js\"}\n";
+        pkg.close();
+
+        return mockDir;
+    }
+
+    // ─── Nettoyer le mock readline-sync ───
+    static void cleanupReadlineMock(const std::string& targetDir) {
+        std::string mockDir = "/tmp/__mock_readline_sync__";
+        if (fs::exists(mockDir)) {
+            fs::remove_all(mockDir);
+        }
+    }
+
+    // ─── Créer un wrapper pour le mode direct + stdin ───
+    // Le wrapper intercepte require('readline-sync') et retourne le mock
+    static void createDirectStdinWrapper(const std::string& wrapperName,
+                                         const std::string& targetJs,
+                                         const std::string& mockDir) {
+        std::ofstream file(wrapperName);
+        std::string absTarget = fs::absolute(targetJs).string();
+        std::string absMockIndex = fs::absolute(mockDir + "/node_modules/readline-sync/index.js").string();
+        file << "// Auto-generated wrapper (tester_pro v2.0)\n";
+        file << "const Module = require('module');\n";
+        file << "const origResolve = Module._resolveFilename;\n";
+        file << "Module._resolveFilename = function(request, parent, isMain, options) {\n";
+        file << "  if (request === 'readline-sync') {\n";
+        file << "    return '" << absMockIndex << "';\n";
+        file << "  }\n";
+        file << "  return origResolve.call(this, request, parent, isMain, options);\n";
+        file << "};\n";
+        file << "require('" << absTarget << "');\n";
+        file.close();
+    }
+
+    // ─── Exécuter un test ───
     static TestResult runFullTest(const std::string& jsFilePath,
                                   const std::string& expectedOutput) {
         TestResult res;
@@ -324,8 +485,10 @@ void printResult(const TestResult& r, int index) {
         std::cout << C_DIM << "         └─ " << C_RESET << r.details << "\n";
 
         if (!r.expected.empty() && r.testName == "Sortie du programme") {
-            std::cout << C_GREEN << "         Attendu : " << C_RESET << "\"" << r.expected << "\"\n";
-            std::cout << C_RED   << "         Reçu    : " << C_RESET << "\"" << r.stdout_output << "\"\n";
+            std::cout << C_GREEN << "         Attendu : " << C_RESET
+                      << "\"" << escapeForDisplay(r.expected) << "\"\n";
+            std::cout << C_RED   << "         Reçu    : " << C_RESET
+                      << "\"" << escapeForDisplay(r.stdout_output) << "\"\n";
         }
 
         if (!r.stderr_output.empty()) {
@@ -390,51 +553,133 @@ void printSummary(const std::vector<TestResult>& results) {
 }
 
 // ═══════════════════════════════════════════════
+//                  USAGE / HELP
+// ═══════════════════════════════════════════════
+
+void printUsage(const char* progName) {
+    std::cerr << C_BOLD << C_BLUE
+              << "\n  ╔══════════════════════════════════════════╗\n"
+              << "  ║       🔧 MOULINETTE PRO v2.0 🔧          ║\n"
+              << "  ╚══════════════════════════════════════════╝\n"
+              << C_RESET << "\n";
+
+    std::cerr << C_BOLD << "  MODE 1 — Wrapper (avec module.exports) :\n" << C_RESET;
+    std::cerr << C_DIM << "    " << progName
+              << " <ex_file> <wrapper> <func_call> <expected>\n\n" << C_RESET;
+    std::cerr << "    Exemple :\n";
+    std::cerr << C_CYAN << "    " << progName
+              << " ex00/ft_hello_garden.js test.js"
+              << " \"ft_hello_garden()\" \"Hello , Garden Community !\"\n\n" << C_RESET;
+
+    std::cerr << C_BOLD << "  MODE 2 — Direct (exécute le fichier tel quel) :\n" << C_RESET;
+    std::cerr << C_DIM << "    " << progName
+              << " --direct <ex_file> <expected>\n\n" << C_RESET;
+    std::cerr << "    Exemple :\n";
+    std::cerr << C_CYAN << "    " << progName
+              << " --direct ex00/ft_hello_garden.js \"Hello , Garden Community !\"\n\n" << C_RESET;
+
+    std::cerr << C_BOLD << "  MODE 3 — Direct + Stdin (pour readline-sync) :\n" << C_RESET;
+    std::cerr << C_DIM << "    " << progName
+              << " --direct --stdin \"input\" <ex_file> <expected>\n\n" << C_RESET;
+    std::cerr << "    Exemple :\n";
+    std::cerr << C_CYAN << "    " << progName
+              << " --direct --stdin \"Roses\" ex01/ft_garden_name.js"
+              << " \"Garden : Roses\\nStatus : Growing well !\"\n\n" << C_RESET;
+
+    std::cerr << C_DIM << "  Options :\n";
+    std::cerr << "    --direct     Exécute le fichier JS directement (pas de wrapper)\n";
+    std::cerr << "    --stdin \"x\"  Envoie \"x\" sur stdin du programme (simule l'input)\n";
+    std::cerr << "    \\n           Dans <expected>, \\n = retour à la ligne\n";
+    std::cerr << C_RESET << "\n";
+}
+
+// ═══════════════════════════════════════════════
 //                     MAIN
 // ═══════════════════════════════════════════════
 
-/*
-**  Usage :
-**    ./tester_pro <ex_file> <wrapper_name> <function_call> <expected_output>
-**
-**  Exemple :
-**    ./tester_pro ex01/ft_hello_garden.js ex01_test.js "ft_hello_garden()" "Hello, Garden Community!"
-*/
-
 int main(int argc, char *argv[]) {
-    if (argc != 5) {
-        std::cerr << C_RED << "Erreur: " << C_RESET << "Nombre d'arguments invalide.\n\n";
-        std::cerr << C_BOLD << "Usage:" << C_RESET << "\n";
-        std::cerr << "  " << argv[0] << " <ex_file> <wrapper_name> <function_call> <expected_output>\n\n";
-        std::cerr << C_BOLD << "Exemple:" << C_RESET << "\n";
-        std::cerr << "  " << argv[0]
-                  << " ex01/ft_hello_garden.js ex01_test.js"
-                  << " \"ft_hello_garden()\" \"Hello, Garden Community!\"\n\n";
-        std::cerr << C_DIM << "  <ex_file>         : Chemin du fichier JS de l'étudiant\n";
-        std::cerr << "  <wrapper_name>    : Nom du fichier wrapper temporaire\n";
-        std::cerr << "  <function_call>   : Appel de fonction à tester (ex: \"maFonction(42)\")\n";
-        std::cerr << "  <expected_output>  : Sortie attendue sur stdout" << C_RESET << "\n";
-        return 1;
+    // ── Parser les arguments ──
+    bool directMode = false;
+    std::string stdinInput;
+    std::vector<std::string> positionalArgs;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--direct") {
+            directMode = true;
+        } else if (arg == "--stdin") {
+            if (i + 1 >= argc) {
+                std::cerr << C_RED << "Erreur: " << C_RESET
+                          << "--stdin nécessite un argument (l'input à envoyer).\n";
+                return 1;
+            }
+            stdinInput = argv[++i];
+        } else if (arg == "--help" || arg == "-h") {
+            printUsage(argv[0]);
+            return 0;
+        } else {
+            positionalArgs.push_back(arg);
+        }
     }
 
-    std::string ex_file   = argv[1];
-    std::string wrapper   = argv[2];
-    std::string func_call = argv[3];
-    std::string expected  = argv[4];
+    // ── Valider les arguments selon le mode ──
+    if (directMode) {
+        // Mode direct : <ex_file> <expected>
+        if (positionalArgs.size() != 2) {
+            std::cerr << C_RED << "Erreur: " << C_RESET
+                      << "Mode --direct nécessite 2 arguments : <ex_file> <expected>\n\n";
+            printUsage(argv[0]);
+            return 1;
+        }
+    } else {
+        // Mode wrapper : <ex_file> <wrapper> <func_call> <expected>
+        if (positionalArgs.size() != 4) {
+            std::cerr << C_RED << "Erreur: " << C_RESET
+                      << "Mode wrapper nécessite 4 arguments.\n\n";
+            printUsage(argv[0]);
+            return 1;
+        }
+        if (!stdinInput.empty()) {
+            // Stdin aussi supporté en mode wrapper
+        }
+    }
 
-    // Extraire le nom de la fonction (sans les parenthèses et arguments)
-    std::string funcName = func_call.substr(0, func_call.find('('));
+    std::string ex_file, wrapper, func_call, expected;
 
+    if (directMode) {
+        ex_file  = positionalArgs[0];
+        expected = unescapeNewlines(positionalArgs[1]);
+    } else {
+        ex_file   = positionalArgs[0];
+        wrapper   = positionalArgs[1];
+        func_call = positionalArgs[2];
+        expected  = unescapeNewlines(positionalArgs[3]);
+    }
+
+    // Extraire le nom de la fonction (mode wrapper seulement)
+    std::string funcName;
+    if (!directMode) {
+        funcName = func_call.substr(0, func_call.find('('));
+    }
+
+    // ── Affichage header ──
     std::cout << "\n";
     std::cout << C_BOLD << C_BLUE
               << "  ╔══════════════════════════════════════════╗\n"
-              << "  ║       🔧 MOULINETTE PRO - TESTER 🔧      ║\n"
+              << "  ║     🔧 MOULINETTE PRO v2.0 - TESTER 🔧   ║\n"
               << "  ╚══════════════════════════════════════════╝"
               << C_RESET << "\n\n";
 
     std::cout << C_DIM << "  Fichier  : " << C_RESET << ex_file << "\n";
-    std::cout << C_DIM << "  Fonction : " << C_RESET << func_call << "\n";
-    std::cout << C_DIM << "  Attendu  : " << C_RESET << "\"" << expected << "\"\n";
+    std::cout << C_DIM << "  Mode     : " << C_RESET
+              << (directMode ? "Direct (exécution directe)" : "Wrapper (module.exports)") << "\n";
+    if (!directMode) {
+        std::cout << C_DIM << "  Fonction : " << C_RESET << func_call << "\n";
+    }
+    if (!stdinInput.empty()) {
+        std::cout << C_DIM << "  Stdin    : " << C_RESET << "\"" << stdinInput << "\"\n";
+    }
+    std::cout << C_DIM << "  Attendu  : " << C_RESET << "\"" << escapeForDisplay(expected) << "\"\n";
     std::cout << C_DIM << "  Timeout  : " << C_RESET << NodeTesterPro::TIMEOUT_SEC << "s\n";
     std::cout << "\n";
     printSeparator();
@@ -448,34 +693,75 @@ int main(int argc, char *argv[]) {
     printSeparator();
 
     if (!t1.passed) {
-        // Si le fichier n'existe pas, pas besoin de continuer
         printSummary(results);
         return 1;
     }
 
-    // ── TEST 2 : Vérification de module.exports ──
-    TestResult t2 = NodeTesterPro::checkModuleExports(ex_file, funcName);
-    results.push_back(t2);
-    printResult(t2, 2);
-    printSeparator();
+    if (directMode) {
+        // ═══ MODE DIRECT ═══
 
-    if (!t2.passed) {
-        // Si pas de module.exports, on ne peut pas tester
-        printSummary(results);
-        return 1;
+        if (!stdinInput.empty()) {
+            // ── Mode direct + stdin : utiliser le mock readline-sync ──
+            std::string targetDir = fs::path(ex_file).parent_path().string();
+            if (targetDir.empty()) targetDir = ".";
+
+            std::string mockDir = NodeTesterPro::createReadlineMock(targetDir, stdinInput);
+            std::string stdinWrapper = "__stdin_wrapper__.js";
+            NodeTesterPro::createDirectStdinWrapper(stdinWrapper, ex_file, mockDir);
+
+            // ── TEST 2 : Exécution avec mock stdin ──
+            TestResult t2 = NodeTesterPro::runFullTest(stdinWrapper, expected);
+            results.push_back(t2);
+            printResult(t2, 2);
+            printSeparator();
+
+            // Nettoyage
+            fs::remove(stdinWrapper);
+            NodeTesterPro::cleanupReadlineMock(targetDir);
+        } else {
+            // ── TEST 2 : Exécution directe simple ──
+            TestResult t2 = NodeTesterPro::runFullTest(ex_file, expected);
+            results.push_back(t2);
+            printResult(t2, 2);
+            printSeparator();
+        }
+
+    } else {
+        // ═══ MODE WRAPPER (classique) ═══
+
+        // ── TEST 2 : Vérification de module.exports ──
+        TestResult t2 = NodeTesterPro::checkModuleExports(ex_file, funcName);
+        results.push_back(t2);
+        printResult(t2, 2);
+        printSeparator();
+
+        if (!t2.passed) {
+            printSummary(results);
+            return 1;
+        }
+
+        // ── TEST 3 : Exécution et vérification de la sortie ──
+        std::string targetDir = fs::path(ex_file).parent_path().string();
+        if (targetDir.empty()) targetDir = ".";
+
+        std::string mockDir;
+        if (!stdinInput.empty()) {
+            mockDir = NodeTesterPro::createReadlineMock(targetDir, stdinInput);
+        }
+
+        NodeTesterPro::createWrapperScript(wrapper, ex_file, func_call, mockDir);
+
+        TestResult t3 = NodeTesterPro::runFullTest(wrapper, expected);
+        results.push_back(t3);
+        printResult(t3, 3);
+        printSeparator();
+
+        // Nettoyage
+        fs::remove(wrapper);
+        if (!mockDir.empty()) {
+            NodeTesterPro::cleanupReadlineMock(targetDir);
+        }
     }
-
-    // ── TEST 3 : Exécution et vérification de la sortie ──
-    // Créer le wrapper
-    NodeTesterPro::createWrapperScript(wrapper, ex_file, func_call);
-
-    TestResult t3 = NodeTesterPro::runFullTest(wrapper, expected);
-    results.push_back(t3);
-    printResult(t3, 3);
-    printSeparator();
-
-    // Nettoyage
-    fs::remove(wrapper);
 
     // ── Résumé final ──
     printSummary(results);
