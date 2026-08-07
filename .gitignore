@@ -1,0 +1,13 @@
+# Binaires compilés du tester
+tester_pro
+__wrap_*.js
+__stdin_wrapper__.js
+
+# Node modules et mocks temporaires
+node_modules/
+/tmp/__mock_readline_sync__/
+
+# Fichiers systèmes / éditeurs
+.DS_Store
+*.swp
+*~

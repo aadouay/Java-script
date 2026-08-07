@@ -31,11 +31,23 @@ TOTAL_FAIL=0
 TOTAL_SKIP=0
 EX_RESULTS=()
 
-# ── Vérifier que le tester est compilé ──
-if [ ! -f "$TESTER" ]; then
-    echo -e "${YELLOW}⚙ Compilation du tester...${RESET}"
+# ── Vérifier les prérequis (node et g++) ──
+if ! command -v node >/dev/null 2>&1; then
+    echo -e "${RED}❌ Erreur : 'node' n'est pas installé sur cette machine !${RESET}"
+    exit 1
+fi
+
+# ── Recompiler le tester s'il n'existe pas, s'il est périmé, ou s'il ne s'exécute pas ──
+if [ ! -f "$TESTER" ] || [ "$SCRIPT_DIR/tester_pro.cpp" -nt "$TESTER" ] || ! "$TESTER" --help >/dev/null 2>&1; then
+    if ! command -v g++ >/dev/null 2>&1; then
+        echo -e "${RED}❌ Erreur : 'g++' n'est pas installé sur cette machine pour compiler le tester !${RESET}"
+        exit 1
+    fi
+    echo -e "${YELLOW}⚙ Compilation du tester pour cette machine...${RESET}"
+    rm -f "$TESTER"
     g++ -std=c++17 -o "$TESTER" "$SCRIPT_DIR/tester_pro.cpp"
-    echo -e "${GREEN}✓ Tester compilé.${RESET}\n"
+    chmod +x "$TESTER"
+    echo -e "${GREEN}✓ Tester compilé avec succès.${RESET}\n"
 fi
 
 # ── Fonction utilitaire : lancer un test ──
