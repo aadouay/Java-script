@@ -194,28 +194,23 @@ console.log(String(out).length > 0 ? 'HAS_OUTPUT' : 'EMPTY');
         ;;
 
     # ════════════════════════════════════════
-    #  EX04 à EX07 — à définir selon le PDF
+    #  EX04 — ft_loop_it
     # ════════════════════════════════════════
-    4|5|6|7)
-        local ex_name="ex0$ex_num"
-        local exdir="$EX_DIR/$ex_name"
-        if [ ! -d "$exdir" ] || [ -z "$(ls -A "$exdir" 2>/dev/null)" ]; then
-            echo -e "  ${YELLOW}⚠ SKIP — dossier $ex_name vide ou introuvable${RESET}"
-            TOTAL_SKIP=$((TOTAL_SKIP + 1))
-            EX_RESULTS+=("$ex_name: ${YELLOW}⚠ SKIP${RESET}")
-            return
-        fi
-        local jsfile=$(ls "$exdir"/*.js 2>/dev/null | head -1)
-        if [ -z "$jsfile" ]; then
-            echo -e "  ${YELLOW}⚠ SKIP — aucun fichier .js dans $ex_name${RESET}"
-            TOTAL_SKIP=$((TOTAL_SKIP + 1))
-            EX_RESULTS+=("$ex_name: ${YELLOW}⚠ SKIP${RESET}")
-            return
-        fi
-        echo -e "  ${YELLOW}⚠ $ex_name détecté : $(basename "$jsfile") — tests à définir après implémentation${RESET}"
-        EX_RESULTS+=("$ex_name: ${YELLOW}⚠ TODO${RESET}")
-        return
+    4)
+        local fname="ft_loop_it.js"
+        local f
+        f=$(find_file "$EX_DIR/ex04" "$fname") || { skip_exercise "ex04" "$fname"; return; }
+        run_test "[route, middleware, controller]" \
+            "$f" "__wrap_ex04.js" "ft_loop_it([\"route\", \"middleware\", \"controller\"])" \
+            "- for loop -\n0: route\n1: middleware\n2: controller\n- for...of loop -\nroute\nmiddleware\ncontroller" || ex_status="FAIL"
+        run_test "[a, b, c]" \
+            "$f" "__wrap_ex04.js" "ft_loop_it([\"a\", \"b\", \"c\"])" \
+            "- for loop -\n0: a\n1: b\n2: c\n- for...of loop -\na\nb\nc" || ex_status="FAIL"
+        run_test "[1, 2, 3, 4]" \
+            "$f" "__wrap_ex04.js" "ft_loop_it([1, 2, 3, 4])" \
+            "- for loop -\n0: 1\n1: 2\n2: 3\n3: 4\n- for...of loop -\n1\n2\n3\n4" || ex_status="FAIL"
         ;;
+
 
     *)
         echo -e "  ${RED}Exercice $ex_num inconnu${RESET}"
@@ -246,28 +241,22 @@ if [ -n "$1" ]; then
         0) echo -e "${BOLD}║  Exercise 0 : Slice & Split${RESET}" ;;
         1) echo -e "${BOLD}║  Exercise 1 : Replace & Search${RESET}" ;;
         2) echo -e "${BOLD}║  Exercise 2 : Array Basics${RESET}" ;;
-        3) echo -e "${BOLD}║  Exercise 3${RESET}" ;;
-        4) echo -e "${BOLD}║  Exercise 4${RESET}" ;;
-        5) echo -e "${BOLD}║  Exercise 5${RESET}" ;;
-        6) echo -e "${BOLD}║  Exercise 6${RESET}" ;;
-        7) echo -e "${BOLD}║  Exercise 7${RESET}" ;;
+        3) echo -e "${BOLD}║  Exercise 3 : Stack & Queue${RESET}" ;;
+        4) echo -e "${BOLD}║  Exercise 4 : Loop It${RESET}" ;;
         *) echo -e "${BOLD}║  Exercise $ex_arg${RESET}" ;;
     esac
     echo -e "${BOLD}╚════════════════════════════════════════════╝${RESET}"
     test_exercise "$ex_arg"
 else
-    # Tester tous les exercices
-    for i in 0 1 2 3 4 5 6 7; do
+    # Tester tous les exercices (ex00 → ex04)
+    for i in 0 1 2 3 4; do
         echo -e "${BOLD}╔════════════════════════════════════════════╗${RESET}"
         case "$i" in
             0) echo -e "${BOLD}║  Exercise 0 : Slice & Split${RESET}" ;;
             1) echo -e "${BOLD}║  Exercise 1 : Replace & Search${RESET}" ;;
             2) echo -e "${BOLD}║  Exercise 2 : Array Basics${RESET}" ;;
-            3) echo -e "${BOLD}║  Exercise 3${RESET}" ;;
-            4) echo -e "${BOLD}║  Exercise 4${RESET}" ;;
-            5) echo -e "${BOLD}║  Exercise 5${RESET}" ;;
-            6) echo -e "${BOLD}║  Exercise 6${RESET}" ;;
-            7) echo -e "${BOLD}║  Exercise 7${RESET}" ;;
+            3) echo -e "${BOLD}║  Exercise 3 : Stack & Queue${RESET}" ;;
+            4) echo -e "${BOLD}║  Exercise 4 : Loop It${RESET}" ;;
         esac
         echo -e "${BOLD}╚════════════════════════════════════════════╝${RESET}"
         test_exercise "$i"
